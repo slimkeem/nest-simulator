@@ -827,6 +827,29 @@ NestModule::Connect_g_g_D_DFunction::execute( SLIInterpreter* i ) const
   i->EStack.pop();
 }
 
+
+void
+NestModule::Connect_Ag_Ag_D_DFunction::execute( SLIInterpreter* i ) const
+{
+  i->assert_stack_load( 4 );
+
+  ArrayDatum sources =
+		  getValue< ArrayDatum >( i->OStack.pick( 3 ) );
+  ArrayDatum targets =
+    getValue< ArrayDatum >( i->OStack.pick( 2 ) );
+  DictionaryDatum connectivity =
+    getValue< DictionaryDatum >( i->OStack.pick( 1 ) );
+  DictionaryDatum synapse_params =
+    getValue< DictionaryDatum >( i->OStack.pick( 0 ) );
+
+  // dictionary access checking is handled by connect
+  kernel().connection_manager.multi_connect(
+    sources, targets, connectivity, synapse_params );
+
+  i->OStack.pop( 4 );
+  i->EStack.pop();
+}
+
 /* BeginDocumentation
    Name: DataConnect_i_D_s - Connect many neurons from data.
 
@@ -1741,6 +1764,7 @@ NestModule::init( SLIInterpreter* i )
   i->createcommand( "Create_l_i", &create_l_ifunction );
 
   i->createcommand( "Connect_g_g_D_D", &connect_g_g_D_Dfunction );
+  i->createcommand( "Connect_Ag_Ag_D_D", &connect_Ag_Ag_D_Dfunction );
 
   i->createcommand(
     "DataConnect_i_D_s", &dataconnect_i_D_sfunction, "NEST 3.0" );

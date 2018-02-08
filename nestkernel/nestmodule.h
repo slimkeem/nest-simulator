@@ -291,6 +291,12 @@ public:
     void execute( SLIInterpreter* ) const;
   } connect_g_g_D_Dfunction;
 
+  class Connect_Ag_Ag_D_DFunction : public SLIFunction
+  {
+  public:
+    void execute( SLIInterpreter* ) const;
+  } connect_Ag_Ag_D_Dfunction;
+
   class ResetKernelFunction : public SLIFunction
   {
   public:

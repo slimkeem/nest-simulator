@@ -593,6 +593,568 @@ nest::ConnBuilder::loop_over_targets_() const
     or not targets_->is_range() or parameters_requiring_skipping_.size() > 0;
 }
 
+
+// *********************************************************
+
+nest::MultiConnBuilder::MultiConnBuilder( const ArrayDatum& sources,
+  const ArrayDatum& targets,
+  const DictionaryDatum& conn_spec,
+  const DictionaryDatum& syn_spec )
+  : sources_( )
+  , targets_( )
+  , autapses_( true )
+  , multapses_( true )
+  , make_symmetric_( false )
+  , exceptions_raised_( kernel().vp_manager.get_num_threads() )
+  , synapse_model_id_( kernel().model_manager.get_synapsedict()->lookup(
+      "static_synapse" ) )
+  , weight_( 0 )
+  , delay_( 0 )
+  , param_dicts_()
+  , parameters_requiring_skipping_()
+{
+  for ( Token* t = sources.begin(); t != sources.end(); ++t )
+  {
+    sources_.push_back( getValue< GIDCollection >( *t ) );
+  }
+  for ( Token* t = targets.begin(); t != targets.end(); ++t )
+  {
+    targets_.push_back( getValue< GIDCollection >( *t ) );
+  }
+
+  // read out rule-related parameters -------------------------
+  //  - /rule has been taken care of above
+  //  - rule-specific params are handled by subclass c'tor
+  updateValue< bool >( conn_spec, names::autapses, autapses_ );
+  updateValue< bool >( conn_spec, names::multapses, multapses_ );
+  updateValue< bool >( conn_spec, names::make_symmetric, make_symmetric_ );
+
+  // read out synapse-related parameters ----------------------
+  if ( not syn_spec->known( names::model ) )
+  {
+    throw BadProperty( "Synapse spec must contain synapse model." );
+  }
+  const std::string syn_name = ( *syn_spec )[ names::model ];
+  if ( not kernel().model_manager.get_synapsedict()->known( syn_name ) )
+  {
+    throw UnknownSynapseType( syn_name );
+  }
+
+  synapse_model_id_ =
+    kernel().model_manager.get_synapsedict()->lookup( syn_name );
+
+  // We need to make sure that Connect can process all synapse parameters
+  // specified.
+  const ConnectorModel& synapse_model =
+    kernel().model_manager.get_synapse_prototype( synapse_model_id_, 0 );
+  synapse_model.check_synapse_params( syn_spec );
+
+  DictionaryDatum syn_defaults =
+    kernel().model_manager.get_connector_defaults( synapse_model_id_ );
+
+  // All synapse models have the possibility to set the delay (see
+  // SynIdDelay), but some have homogeneous weights, hence it should
+  // be possible to set the delay without the weight.
+  default_weight_ = not syn_spec->known( names::weight );
+
+  default_delay_ = not syn_spec->known( names::delay );
+
+  // If neither weight nor delay are given in the dict, we handle this
+  // separately. Important for hom_w synapses, on which weight cannot
+  // be set. However, we use default weight and delay for _all_ types
+  // of synapses.
+  default_weight_and_delay_ = ( default_weight_ && default_delay_ );
+
+#ifdef HAVE_MUSIC
+  // We allow music_channel as alias for receptor_type during
+  // connection setup
+  ( *syn_defaults )[ names::music_channel ] = 0;
+#endif
+
+  if ( not default_weight_and_delay_ )
+  {
+    weight_ = syn_spec->known( names::weight )
+      ? ConnParameter::create( ( *syn_spec )[ names::weight ],
+          kernel().vp_manager.get_num_threads() )
+      : ConnParameter::create( ( *syn_defaults )[ names::weight ],
+          kernel().vp_manager.get_num_threads() );
+    register_parameters_requiring_skipping_( *weight_ );
+    delay_ = syn_spec->known( names::delay )
+      ? ConnParameter::create(
+          ( *syn_spec )[ names::delay ], kernel().vp_manager.get_num_threads() )
+      : ConnParameter::create( ( *syn_defaults )[ names::delay ],
+          kernel().vp_manager.get_num_threads() );
+  }
+  else if ( default_weight_ )
+  {
+    delay_ = syn_spec->known( names::delay )
+      ? ConnParameter::create(
+          ( *syn_spec )[ names::delay ], kernel().vp_manager.get_num_threads() )
+      : ConnParameter::create( ( *syn_defaults )[ names::delay ],
+          kernel().vp_manager.get_num_threads() );
+  }
+  register_parameters_requiring_skipping_( *delay_ );
+
+  // Structural plasticity parameters
+  // Check if both pre and post synaptic element are provided
+  if ( syn_spec->known( names::pre_synaptic_element )
+    && syn_spec->known( names::post_synaptic_element ) )
+  {
+    pre_synaptic_element_name_ =
+      getValue< std::string >( syn_spec, names::pre_synaptic_element );
+    post_synaptic_element_name_ =
+      getValue< std::string >( syn_spec, names::post_synaptic_element );
+
+    use_pre_synaptic_element_ = true;
+    use_post_synaptic_element_ = true;
+  }
+  else
+  {
+    if ( syn_spec->known( names::pre_synaptic_element )
+      || syn_spec->known( names::post_synaptic_element ) )
+    {
+      throw BadProperty(
+        "In order to use structural plasticity, both a pre and post synaptic "
+        "element must be specified" );
+    }
+
+    use_pre_synaptic_element_ = false;
+    use_post_synaptic_element_ = false;
+  }
+
+  // synapse-specific parameters
+  // TODO: Can we create this set once and for all?
+  //       Should not be done as static initialization, since
+  //       that might conflict with static initialization of
+  //       Name system.
+  std::set< Name > skip_set;
+  skip_set.insert( names::weight );
+  skip_set.insert( names::delay );
+  skip_set.insert( names::min_delay );
+  skip_set.insert( names::max_delay );
+  skip_set.insert( names::num_connections );
+  skip_set.insert( names::synapse_model );
+
+  for ( Dictionary::const_iterator default_it = syn_defaults->begin();
+        default_it != syn_defaults->end();
+        ++default_it )
+  {
+    const Name param_name = default_it->first;
+    if ( skip_set.find( param_name ) != skip_set.end() )
+    {
+      continue; // weight, delay or not-settable parameter
+    }
+
+    if ( syn_spec->known( param_name ) )
+    {
+      synapse_params_[ param_name ] = ConnParameter::create(
+        ( *syn_spec )[ param_name ], kernel().vp_manager.get_num_threads() );
+      register_parameters_requiring_skipping_( *synapse_params_[ param_name ] );
+    }
+  }
+
+  // Now create dictionary with dummy values that we will use
+  // to pass settings to the synapses created. We create it here
+  // once to avoid re-creating the object over and over again.
+  if ( synapse_params_.size() > 0 )
+  {
+    for ( index t = 0; t < kernel().vp_manager.get_num_threads(); ++t )
+    {
+      param_dicts_.push_back( new Dictionary() );
+
+      for ( ConnParameterMap::const_iterator it = synapse_params_.begin();
+            it != synapse_params_.end();
+            ++it )
+      {
+        if ( it->first == names::receptor_type
+          || it->first == names::music_channel
+          || it->first == names::synapse_label )
+        {
+          ( *param_dicts_[ t ] )[ it->first ] = Token( new IntegerDatum( 0 ) );
+        }
+        else
+        {
+          ( *param_dicts_[ t ] )[ it->first ] = Token( new DoubleDatum( 0.0 ) );
+        }
+      }
+    }
+  }
+
+  // If make_symmetric_ is requested call reset on all parameters in order
+  // to check if all parameters support symmetric connections
+  if ( make_symmetric_ )
+  {
+    if ( weight_ )
+    {
+      weight_->reset();
+    }
+    if ( delay_ )
+    {
+      delay_->reset();
+    }
+    for ( ConnParameterMap::const_iterator it = synapse_params_.begin();
+          it != synapse_params_.end();
+          ++it )
+    {
+      it->second->reset();
+    }
+  }
+}
+
+
+nest::MultiConnBuilder::~MultiConnBuilder()
+{
+  delete weight_;
+  delete delay_;
+  for ( std::map< Name, ConnParameter* >::iterator it = synapse_params_.begin();
+        it != synapse_params_.end();
+        ++it )
+  {
+    delete it->second;
+  }
+}
+
+/**
+ * Updates the number of connected synaptic elements in the
+ * target and the source.
+ * Returns 0 if the target is either on another
+ * MPI machine or another thread. Returns 1 otherwise.
+ *
+ * @param sgid id of the source
+ * @param tgid id of the target
+ * @param tid thread id
+ * @param update amount of connected synaptic elements to update
+ * @return
+ */
+bool
+nest::MultiConnBuilder::change_connected_synaptic_elements( index sgid,
+  index tgid,
+  const int tid,
+  int update )
+{
+  assert( false and "Not implemented" );
+
+  int local = true;
+  // check whether the source is on this mpi machine
+  if ( kernel().node_manager.is_local_gid( sgid ) )
+  {
+    Node* const source = kernel().node_manager.get_node( sgid, tid );
+    const thread source_thread = source->get_thread();
+
+    // check whether the source is on our thread
+    if ( tid == source_thread )
+    {
+      // update the number of connected synaptic elements
+      source->connect_synaptic_element( pre_synaptic_element_name_, update );
+    }
+  }
+
+  // check whether the target is on this mpi machine
+  if ( not kernel().node_manager.is_local_gid( tgid ) )
+  {
+    local = false;
+  }
+  else
+  {
+    Node* const target = kernel().node_manager.get_node( tgid, tid );
+    const thread target_thread = target->get_thread();
+    // check whether the target is on our thread
+    if ( tid != target_thread )
+    {
+      local = false;
+    }
+    else
+    {
+      // update the number of connected synaptic elements
+      target->connect_synaptic_element( post_synaptic_element_name_, update );
+    }
+  }
+  return local;
+}
+
+/**
+ * Now we can connect with or without structural plasticity
+ */
+void
+nest::MultiConnBuilder::connect()
+{
+  // We test here, and not in the MultiConnBuilder constructor, so the derived
+  // classes are fully constructed when the test is executed
+  if ( kernel().model_manager.connector_requires_symmetric( synapse_model_id_ )
+    and not( is_symmetric() or make_symmetric_ ) )
+  {
+    throw BadProperty(
+      "Connections with this synapse model can only be created as "
+      "one-to-one connections with \"make_symmetric\" set to true "
+      "or as all-to-all connections with equal source and target "
+      "populations and default or scalar parameters." );
+  }
+
+  if ( make_symmetric_ and not supports_symmetric() )
+  {
+    throw NotImplemented(
+      "This connection rule does not support symmetric connections." );
+  }
+
+  if ( use_structural_plasticity_() )
+  {
+    if ( make_symmetric_ )
+    {
+      throw NotImplemented(
+        "Symmetric connections are not supported in combination with "
+        "structural plasticity." );
+    }
+    sp_connect_();
+  }
+  else
+  {
+    connect_();
+    if ( make_symmetric_ )
+    {
+      // call reset on all parameters
+      if ( weight_ )
+      {
+        weight_->reset();
+      }
+      if ( delay_ )
+      {
+        delay_->reset();
+      }
+      for ( ConnParameterMap::const_iterator it = synapse_params_.begin();
+            it != synapse_params_.end();
+            ++it )
+      {
+        it->second->reset();
+      }
+
+      std::swap( sources_, targets_ );
+      connect_();
+      std::swap( sources_, targets_ ); // re-establish original state
+    }
+  }
+
+  // check if any exceptions have been raised
+  for ( size_t thr = 0; thr < kernel().vp_manager.get_num_threads(); ++thr )
+  {
+    if ( exceptions_raised_.at( thr ).valid() )
+    {
+      throw WrappedThreadException( *( exceptions_raised_.at( thr ) ) );
+    }
+  }
+}
+
+/**
+ * Now we can delete synapses with or without structural plasticity
+ */
+void
+nest::MultiConnBuilder::disconnect()
+{
+  if ( use_structural_plasticity_() )
+  {
+    sp_disconnect_();
+  }
+  else
+  {
+    disconnect_();
+  }
+
+  // check if any exceptions have been raised
+  for ( index thr = 0; thr < kernel().vp_manager.get_num_threads(); ++thr )
+  {
+    if ( exceptions_raised_.at( thr ).valid() )
+    {
+      throw WrappedThreadException( *( exceptions_raised_.at( thr ) ) );
+    }
+  }
+}
+
+void
+nest::MultiConnBuilder::single_connect_( index sgid,
+  Node& target,
+  thread target_thread,
+  librandom::RngPtr& rng )
+{
+  if ( this->requires_proxies() and not target.has_proxies() )
+  {
+    throw IllegalConnection(
+      "Cannot use this rule to connect to nodes"
+      " without proxies (usually devices)." );
+  }
+
+  if ( param_dicts_.empty() ) // indicates we have no synapse params
+  {
+    if ( default_weight_and_delay_ )
+    {
+      kernel().connection_manager.connect(
+        sgid, &target, target_thread, synapse_model_id_ );
+    }
+    else if ( default_weight_ )
+    {
+      kernel().connection_manager.connect( sgid,
+        &target,
+        target_thread,
+        synapse_model_id_,
+        delay_->value_double( target_thread, rng ) );
+    }
+    else if ( default_delay_ )
+    {
+      kernel().connection_manager.connect( sgid,
+        &target,
+        target_thread,
+        synapse_model_id_,
+        numerics::nan,
+        weight_->value_double( target_thread, rng ) );
+    }
+    else
+    {
+      double delay = delay_->value_double( target_thread, rng );
+      double weight = weight_->value_double( target_thread, rng );
+      kernel().connection_manager.connect(
+        sgid, &target, target_thread, synapse_model_id_, delay, weight );
+    }
+  }
+  else
+  {
+    assert( kernel().vp_manager.get_num_threads() == param_dicts_.size() );
+
+    for ( ConnParameterMap::const_iterator it = synapse_params_.begin();
+          it != synapse_params_.end();
+          ++it )
+    {
+      if ( it->first == names::receptor_type
+        || it->first == names::music_channel
+        || it->first == names::synapse_label )
+      {
+        try
+        {
+          // change value of dictionary entry without allocating new datum
+          IntegerDatum* id = static_cast< IntegerDatum* >(
+            ( ( *param_dicts_[ target_thread ] )[ it->first ] ).datum() );
+          ( *id ) = it->second->value_int( target_thread, rng );
+        }
+        catch ( KernelException& e )
+        {
+          if ( it->first == names::receptor_type )
+          {
+            throw BadProperty( "Receptor type must be of type integer." );
+          }
+          else if ( it->first == names::music_channel )
+          {
+            throw BadProperty( "Music channel type must be of type integer." );
+          }
+          else if ( it->first == names::synapse_label )
+          {
+            throw BadProperty( "Synapse label must be of type integer." );
+          }
+        }
+      }
+      else
+      {
+        // change value of dictionary entry without allocating new datum
+        DoubleDatum* dd = static_cast< DoubleDatum* >(
+          ( ( *param_dicts_[ target_thread ] )[ it->first ] ).datum() );
+        ( *dd ) = it->second->value_double( target_thread, rng );
+      }
+    }
+
+    if ( default_weight_and_delay_ )
+    {
+      kernel().connection_manager.connect( sgid,
+        &target,
+        target_thread,
+        synapse_model_id_,
+        param_dicts_[ target_thread ] );
+    }
+    else if ( default_weight_ )
+    {
+      kernel().connection_manager.connect( sgid,
+        &target,
+        target_thread,
+        synapse_model_id_,
+        param_dicts_[ target_thread ],
+        delay_->value_double( target_thread, rng ) );
+    }
+    else if ( default_delay_ )
+    {
+      kernel().connection_manager.connect( sgid,
+        &target,
+        target_thread,
+        synapse_model_id_,
+        param_dicts_[ target_thread ],
+        numerics::nan,
+        weight_->value_double( target_thread, rng ) );
+    }
+    else
+    {
+      double delay = delay_->value_double( target_thread, rng );
+      double weight = weight_->value_double( target_thread, rng );
+      kernel().connection_manager.connect( sgid,
+        &target,
+        target_thread,
+        synapse_model_id_,
+        param_dicts_[ target_thread ],
+        delay,
+        weight );
+    }
+  }
+}
+
+void
+nest::MultiConnBuilder::set_pre_synaptic_element_name( const std::string& name )
+{
+  if ( name.empty() )
+  {
+    throw BadProperty( "pre_synaptic_element cannot be empty." );
+  }
+
+  pre_synaptic_element_name_ = Name( name );
+  use_pre_synaptic_element_ = not name.empty();
+}
+
+void
+nest::MultiConnBuilder::set_post_synaptic_element_name( const std::string& name )
+{
+  if ( name.empty() )
+  {
+    throw BadProperty( "post_synaptic_element cannot be empty." );
+  }
+
+  post_synaptic_element_name_ = Name( name );
+  use_post_synaptic_element_ = not name.empty();
+}
+
+bool
+nest::MultiConnBuilder::all_parameters_scalar_() const
+{
+  bool all_scalar = true;
+  if ( weight_ )
+  {
+    all_scalar = all_scalar && weight_->is_scalar();
+  }
+  if ( delay_ )
+  {
+    all_scalar = all_scalar && delay_->is_scalar();
+  }
+  for ( ConnParameterMap::const_iterator it = synapse_params_.begin();
+        it != synapse_params_.end();
+        ++it )
+  {
+    all_scalar = all_scalar && it->second->is_scalar();
+  }
+  return all_scalar;
+}
+
+bool
+nest::MultiConnBuilder::loop_over_targets_( const GIDCollection& targets ) const
+{
+  return targets.size() < kernel().node_manager.local_nodes_size()
+    or not targets.is_range() or parameters_requiring_skipping_.size() > 0;
+}
+
+
+// *********************************************************
+
+
 nest::OneToOneBuilder::OneToOneBuilder( const GIDCollection& sources,
   const GIDCollection& targets,
   const DictionaryDatum& conn_spec,
@@ -1102,49 +1664,60 @@ nest::AllToAllBuilder::sp_disconnect_()
   }
 }
 
-nest::FixedInDegreeBuilder::FixedInDegreeBuilder( const GIDCollection& sources,
-  const GIDCollection& targets,
+// *******************************************************
+
+nest::FixedInDegreeBuilder::FixedInDegreeBuilder( const ArrayDatum& sources,
+  const ArrayDatum& targets,
   const DictionaryDatum& conn_spec,
   const DictionaryDatum& syn_spec )
-  : ConnBuilder( sources, targets, conn_spec, syn_spec )
+  : MultiConnBuilder( sources, targets, conn_spec, syn_spec )
   , indegree_( ( *conn_spec )[ names::indegree ] )
 {
   // check for potential errors
-  long n_sources = static_cast< long >( sources_->size() );
-  if ( n_sources == 0 )
+  if ( sources.size() != targets.size() )
   {
-    throw BadProperty( "Source array must not be empty." );
+	throw BadProperty( "Number of source populations does not match number of target populations." );
   }
-  // verify that indegree is not larger than source population if multapses are
-  // disabled
-  if ( not multapses_ )
-  {
-    if ( indegree_ > n_sources )
-    {
-      throw BadProperty( "Indegree cannot be larger than population size." );
-    }
-    else if ( indegree_ == n_sources and not autapses_ )
-    {
-      LOG( M_WARNING,
-        "FixedInDegreeBuilder::connect",
-        "Multapses and autapses prohibited. When the sources and the targets "
-        "have a non-empty "
-        "intersection, the connect algorithm will enter an infinite loop." );
-      return;
-    }
-
-    if ( indegree_ > 0.9 * n_sources )
-    {
-      LOG( M_WARNING,
-        "FixedInDegreeBuilder::connect",
-        "Multapses are prohibited and you request more than 90% connectivity. "
-        "Expect long connecting times!" );
-    }
-  } // if (not multapses_ )
 
   if ( indegree_ < 0 )
   {
     throw BadProperty( "Indegree cannot be less than zero." );
+  }
+
+  for ( GCVec_::const_iterator it = sources_.begin() ; it != sources_.end() ; ++it)
+  {
+    const long n_sources = static_cast< long >( it->size() );
+    if ( n_sources == 0 )
+    {
+      throw BadProperty( "Source array must not be empty." );
+    }
+
+	  // verify that indegree is not larger than source population if multapses are
+	  // disabled
+	  if ( not multapses_ )
+	  {
+		if ( indegree_ > n_sources )
+		{
+		  throw BadProperty( "Indegree cannot be larger than population size." );
+		}
+		else if ( indegree_ == n_sources and not autapses_ )
+		{
+		  LOG( M_WARNING,
+			"FixedInDegreeBuilder::connect",
+			"Multapses and autapses prohibited. When the sources and the targets "
+			"have a non-empty "
+			"intersection, the connect algorithm will enter an infinite loop." );
+		  return;
+		}
+
+		if ( indegree_ > 0.9 * n_sources )
+		{
+		  LOG( M_WARNING,
+			"FixedInDegreeBuilder::connect",
+			"Multapses are prohibited and you request more than 90% connectivity. "
+			"Expect long connecting times!" );
+		}
+	  } // if (not multapses_ )
   }
 }
 
@@ -1153,61 +1726,65 @@ nest::FixedInDegreeBuilder::connect_()
 {
 #pragma omp parallel
   {
-    // get thread id
-    const int tid = kernel().vp_manager.get_thread_id();
+	for ( size_t n = 0 ; n < sources_.size() ; ++n )
+	{
 
-    try
-    {
-      // allocate pointer to thread specific random generator
-      librandom::RngPtr rng = kernel().rng_manager.get_rng( tid );
+		// get thread id
+		const int tid = kernel().vp_manager.get_thread_id();
 
-      if ( loop_over_targets_() )
-      {
-        for ( GIDCollection::const_iterator tgid = targets_->begin();
-              tgid != targets_->end();
-              ++tgid )
-        {
-          // check whether the target is on this mpi machine
-          if ( not kernel().node_manager.is_local_gid( *tgid ) )
-          {
-            // skip array parameters handled in other virtual processes
-            skip_conn_parameter_( tid, indegree_ );
-            continue;
-          }
+		try
+		{
+		  // allocate pointer to thread specific random generator
+		  librandom::RngPtr rng = kernel().rng_manager.get_rng( tid );
 
-          Node* target = kernel().node_manager.get_node( *tgid, tid );
+		  if ( loop_over_targets_( targets_[n] ) )
+		  {
+			for ( GIDCollection::const_iterator tgid = targets_[n].begin();
+				  tgid != targets_[n].end();
+				  ++tgid )
+			{
+			  // check whether the target is on this mpi machine
+			  if ( not kernel().node_manager.is_local_gid( *tgid ) )
+			  {
+				// skip array parameters handled in other virtual processes
+				skip_conn_parameter_( tid, indegree_ );
+				continue;
+			  }
 
-          inner_connect_( tid, rng, target, *tgid, true );
-        }
-      }
-      else
-      {
-        for ( SparseNodeArray::const_iterator it =
-                kernel().node_manager.local_nodes_begin();
-              it != kernel().node_manager.local_nodes_end();
-              ++it )
-        {
-          Node* const target = ( *it ).get_node();
-          const index tgid = ( *it ).get_gid();
+			  Node* target = kernel().node_manager.get_node( *tgid, tid );
 
-          // Is the local node in the targets list?
-          if ( targets_->find( tgid ) < 0 )
-          {
-            continue;
-          }
+			  inner_connect_( tid, rng, target, *tgid, true, n );
+			}
+		  }
+		  else
+		  {
+			for ( SparseNodeArray::const_iterator it =
+					kernel().node_manager.local_nodes_begin();
+				  it != kernel().node_manager.local_nodes_end();
+				  ++it )
+			{
+			  Node* const target = ( *it ).get_node();
+			  const index tgid = ( *it ).get_gid();
 
-          inner_connect_( tid, rng, target, tgid, false );
-        }
-      }
-    }
-    catch ( std::exception& err )
-    {
-      // We must create a new exception here, err's lifetime ends at
-      // the end of the catch block.
-      exceptions_raised_.at( tid ) =
-        lockPTR< WrappedThreadException >( new WrappedThreadException( err ) );
-    }
-  }
+			  // Is the local node in the targets list?
+			  if ( targets_[n].find( tgid ) < 0 )
+			  {
+				continue;
+			  }
+
+			  inner_connect_( tid, rng, target, tgid, false, n );
+			}
+		  }
+		}
+		catch ( std::exception& err )
+		{
+		  // We must create a new exception here, err's lifetime ends at
+		  // the end of the catch block.
+		  exceptions_raised_.at( tid ) =
+			lockPTR< WrappedThreadException >( new WrappedThreadException( err ) );
+		}
+	} // for n
+  }  // omp parallel
 }
 
 void
@@ -1215,7 +1792,8 @@ nest::FixedInDegreeBuilder::inner_connect_( const int tid,
   librandom::RngPtr& rng,
   Node* target,
   index tgid,
-  bool skip )
+  bool skip,
+  size_t src_idx )
 {
   const thread target_thread = target->get_thread();
 
@@ -1231,7 +1809,7 @@ nest::FixedInDegreeBuilder::inner_connect_( const int tid,
   }
 
   std::set< long > ch_ids;
-  long n_rnd = sources_->size();
+  long n_rnd = sources_[src_idx].size();
 
   for ( long j = 0; j < indegree_; ++j )
   {
@@ -1241,7 +1819,7 @@ nest::FixedInDegreeBuilder::inner_connect_( const int tid,
     do
     {
       s_id = rng->ulrand( n_rnd );
-      sgid = ( *sources_ )[ s_id ];
+      sgid = ( sources_[src_idx] )[ s_id ];
     } while ( ( not autapses_ and sgid == tgid )
       || ( not multapses_ and ch_ids.find( s_id ) != ch_ids.end() ) );
     if ( not multapses_ )

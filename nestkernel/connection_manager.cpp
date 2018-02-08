@@ -345,9 +345,12 @@ nest::ConnectionManager::get_conn_builder( const std::string& name,
   const DictionaryDatum& conn_spec,
   const DictionaryDatum& syn_spec )
 {
+  assert( false and "not implelented" );
+
   const size_t rule_id = connruledict_->lookup( name );
-  return connbuilder_factories_.at( rule_id )->create(
-    sources, targets, conn_spec, syn_spec );
+  return 0;
+  //return connbuilder_factories_.at( rule_id )->create(
+  //  sources, targets, conn_spec, syn_spec );
 }
 
 void
@@ -382,8 +385,9 @@ nest::ConnectionManager::connect( const GIDCollection& sources,
   }
   const long rule_id = ( *connruledict_ )[ rule_name ];
 
-  ConnBuilder* cb = connbuilder_factories_.at( rule_id )->create(
+  AbstractConnBuilder* acb = connbuilder_factories_.at( rule_id )->create(
     sources, targets, conn_spec, syn_spec );
+  ConnBuilder* cb = dynamic_cast< ConnBuilder* >( acb );
   assert( cb != 0 );
 
   // at this point, all entries in conn_spec and syn_spec have been checked
@@ -395,6 +399,46 @@ nest::ConnectionManager::connect( const GIDCollection& sources,
   cb->connect();
   delete cb;
 }
+
+
+void
+nest::ConnectionManager::multi_connect( const ArrayDatum& sources,
+  const ArrayDatum& targets,
+  const DictionaryDatum& conn_spec,
+  const DictionaryDatum& syn_spec )
+{
+  conn_spec->clear_access_flags();
+  syn_spec->clear_access_flags();
+
+  if ( not conn_spec->known( names::rule ) )
+  {
+    throw BadProperty( "Connectivity spec must contain connectivity rule." );
+  }
+  const Name rule_name =
+    static_cast< const std::string >( ( *conn_spec )[ names::rule ] );
+
+  if ( not connruledict_->known( rule_name ) )
+  {
+    throw BadProperty(
+      String::compose( "Unknown connectivity rule: %1", rule_name ) );
+  }
+  const long rule_id = ( *connruledict_ )[ rule_name ];
+
+  AbstractConnBuilder* acb = connbuilder_factories_.at( rule_id )->create(
+    sources, targets, conn_spec, syn_spec );
+  MultiConnBuilder* cb = dynamic_cast< MultiConnBuilder* >( acb );
+  assert( cb != 0 );
+
+  // at this point, all entries in conn_spec and syn_spec have been checked
+  ALL_ENTRIES_ACCESSED(
+    *conn_spec, "Connect", "Unread dictionary entries in conn_spec: " );
+  ALL_ENTRIES_ACCESSED(
+    *syn_spec, "Connect", "Unread dictionary entries in syn_spec: " );
+
+  cb->connect();
+  delete cb;
+}
+
 
 void
 nest::ConnectionManager::update_delay_extrema_()

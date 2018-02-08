@@ -67,6 +67,8 @@ public:
   GIDCollection()
   {
   }
+
+  GIDCollection( const GIDCollection& );
   GIDCollection( index first, index last );
   GIDCollection( IntVectorDatum gids );
   GIDCollection( TokenArray gids );

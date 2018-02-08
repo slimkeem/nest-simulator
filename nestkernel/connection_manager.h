@@ -94,11 +94,22 @@ public:
     const DictionaryDatum& conn_spec,
     const DictionaryDatum& syn_spec );
 
+  MultiConnBuilder* get_conn_builder( const std::string& name,
+    const ArrayDatum& sources,
+    const ArrayDatum& targets,
+    const DictionaryDatum& conn_spec,
+    const DictionaryDatum& syn_spec );
+
   /**
    * Create connections.
    */
   void connect( const GIDCollection&,
     const GIDCollection&,
+    const DictionaryDatum&,
+    const DictionaryDatum& );
+
+  void multi_connect( const ArrayDatum&,
+    const ArrayDatum&,
     const DictionaryDatum&,
     const DictionaryDatum& );
 

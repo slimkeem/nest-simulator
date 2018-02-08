@@ -52,6 +52,14 @@ GIDCollection::GIDCollection( TokenArray gids )
   }
 }
 
+GIDCollection::GIDCollection( const GIDCollection& gc )
+  : gid_array_( gc.gid_array_ )
+  , gid_range_( gc.gid_range_ )
+  , is_range_( gc.is_range_ )
+{
+	}
+
+
 void
 GIDCollection::print_me( std::ostream& out ) const
 {

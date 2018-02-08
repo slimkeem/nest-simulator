@@ -49,8 +49,13 @@ public:
   virtual ~GenericConnBuilderFactory()
   {
   }
-  virtual ConnBuilder* create( const GIDCollection&,
+  virtual AbstractConnBuilder* create( const GIDCollection&,
     const GIDCollection&,
+    const DictionaryDatum&,
+    const DictionaryDatum& ) const = 0;
+
+  virtual AbstractConnBuilder* create( const ArrayDatum&,
+    const ArrayDatum&,
     const DictionaryDatum&,
     const DictionaryDatum& ) const = 0;
 };
@@ -65,7 +70,7 @@ class ConnBuilderFactory : public GenericConnBuilderFactory
 
 public:
   //! create conn builder
-  ConnBuilder*
+  AbstractConnBuilder*
   create( const GIDCollection& sources,
     const GIDCollection& targets,
     const DictionaryDatum& conn_spec,
@@ -73,7 +78,19 @@ public:
   {
     return new ConnBuilderType( sources, targets, conn_spec, syn_spec );
   }
+
+  //! create conn builder
+  AbstractConnBuilder*
+  create( const ArrayDatum& sources,
+    const ArrayDatum& targets,
+    const DictionaryDatum& conn_spec,
+    const DictionaryDatum& syn_spec ) const
+  {
+    return new ConnBuilderType( sources, targets, conn_spec, syn_spec );
+  }
+
 };
+
 
 } // namespace nest
 
