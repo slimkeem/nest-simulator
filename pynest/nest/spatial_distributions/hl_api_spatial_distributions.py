@@ -32,6 +32,7 @@ except ImportError:
 __all__ = [
     'exponential',
     'gaussian',
+    'gaussian_tab',
     'gaussian2D',
     'gamma',
 ]
@@ -83,6 +84,32 @@ def gaussian(x, mean=0.0, std=1.0):
         'std': std,
     })
 
+
+def gaussian_tab(x, mean=0.0, std=1.0, step=0.1, max=1.0):
+    """
+    Applies a gaussian distribution on a Parameter.
+
+    Parameters
+    ----------
+    x : Parameter
+        Input Parameter.
+    mean : float, optional
+        Mean of the distribution. Default is 0.0.
+    std : float, optional
+        Standard deviation of the distribution. Default is 1.0.
+
+    Returns
+    -------
+    Parameter:
+        Object yielding values drawn from the distribution.
+    """
+    return CreateParameter('gaussian_tab', {
+        'x': x,
+        'mean': mean,
+        'std': std,
+        'table_step': step,
+        'table_max': max
+    })
 
 def gaussian2D(x, y, mean_x=0.0, mean_y=0.0, std_x=1.0, std_y=1.0, rho=0.0):
     """

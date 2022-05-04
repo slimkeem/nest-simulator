@@ -1346,6 +1346,59 @@ protected:
 
 
 /**
+ * Parameter class representing a gaussian distribution applied on a parameter.
+ * Can only be used when connecting spatially distributed nodes.
+ */
+class TabulatedGaussianParameter : public Parameter
+{
+public:
+  using Parameter::value;
+
+  /**
+   * Construct the parameter from a dictionary of arguments.
+   */
+  TabulatedGaussianParameter( const DictionaryDatum& d );
+
+  /**
+   * Copy constructor.
+   */
+  TabulatedGaussianParameter( const TabulatedGaussianParameter& p )
+    : Parameter( p )
+    , p_( p.p_ )
+    , mean_( p.mean_ )
+    , inv_two_std2_( p.inv_two_std2_ )
+		, table_step_( p.table_step_ )
+		, table_max_( p.table_max_ )
+		, table_values_( p.table_values_ )
+  {
+  }
+
+  /**
+   * @returns the value of the parameter.
+   */
+  double
+  value( RngPtr, Node* ) override
+  {
+    throw BadParameterValue( "Gaussian distribution parameter can only be used when connecting." );
+  }
+
+  double value( RngPtr rng,
+    const std::vector< double >& source_pos,
+    const std::vector< double >& target_pos,
+    const AbstractLayer& layer,
+    Node* node ) override;
+
+protected:
+  std::shared_ptr< Parameter > const p_;
+  const double mean_;
+  const double inv_two_std2_;
+  const double table_step_;
+  const double table_max_;
+  std::vector< double > table_values_;
+};
+
+
+/**
  * Parameter class representing a gaussian distribution in two dimensions applied on a parameter.
  * Can only be used when connecting spatially distributed nodes.
  */

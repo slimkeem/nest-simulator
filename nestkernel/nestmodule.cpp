@@ -3068,6 +3068,7 @@ NestModule::init( SLIInterpreter* i )
   register_parameter< NodePosParameter >( "position" );
   register_parameter< SpatialDistanceParameter >( "distance" );
   register_parameter< GaussianParameter >( "gaussian" );
+  register_parameter< TabulatedGaussianParameter >( "gaussian_tab" );
   register_parameter< Gaussian2DParameter >( "gaussian2d" );
   register_parameter< GammaParameter >( "gamma" );
   register_parameter< ExpDistParameter >( "exp_distribution" );

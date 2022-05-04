@@ -301,6 +301,40 @@ GaussianParameter::value( RngPtr rng,
   return std::exp( -dx * dx * inv_two_std2_ );
 }
 
+TabulatedGaussianParameter::TabulatedGaussianParameter( const DictionaryDatum& d )
+  : Parameter( true )
+  , p_( getValue< ParameterDatum >( d, "x" ) )
+  , mean_( getValue< double >( d, "mean" ) )
+  , inv_two_std2_( 1.0 / ( 2 * getValue< double >( d, "std" ) * getValue< double >( d, "std" ) ) )
+  , table_step_( getValue<double>( d, "table_step" ) )
+  , table_max_( getValue<double>( d, "table_max" ))
+{
+  const auto std = getValue< double >( d, "std" );
+  if ( std <= 0 )
+  {
+    throw BadProperty( "std > 0 required for gaussian distribution parameter, got std=" + std::to_string( std ) );
+  }
+
+  for ( double x = 0, size_t i = 0 ; x < table_max_ ; x += table_step_, ++i )
+  {
+  	table_values_[ i ] = exp( ... )   // std::exp( -dx * dx * inv_two_std2_ );
+  }
+}
+
+double
+TabulatedGaussianParameter::value( RngPtr rng,
+  const std::vector< double >& source_pos,
+  const std::vector< double >& target_pos,
+  const AbstractLayer& layer,
+  Node* node )
+{
+  const auto dx = p_->value( rng, source_pos, target_pos, layer, node ) - mean_;
+  size_t left = std::floor( dx / table_step_ );
+  size_t right = std::ceil( dx / table_step_ );
+  return table_values[left] + (tv[right]-tv[left]) * dx / ....;
+  // return std::exp( -dx * dx * inv_two_std2_ );
+}
+
 
 Gaussian2DParameter::Gaussian2DParameter( const DictionaryDatum& d )
   : Parameter( true )
