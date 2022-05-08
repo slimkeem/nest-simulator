@@ -1379,7 +1379,7 @@ public:
   double
   value( RngPtr, Node* ) override
   {
-    throw BadParameterValue( "Gaussian distribution parameter can only be used when connecting." );
+    throw BadParameterValue( "Tabulated Gaussian distribution parameter can only be used when connecting." );
   }
 
   double value( RngPtr rng,
