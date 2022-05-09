@@ -476,6 +476,8 @@ extern const Name t_ref_abs;
 extern const Name t_ref_remaining;
 extern const Name t_ref_tot;
 extern const Name t_spike;
+extern const Name table_max;
+extern const Name table_step;
 extern const Name target;
 extern const Name target_thread;
 extern const Name targets;

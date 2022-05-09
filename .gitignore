@@ -26,6 +26,7 @@ examples/example_logs/
 /sli/sli
 
 # cmake artefacts
+CMakeLists.txt.user
 CMakeCache.txt
 CMakeDoxyfile.in
 CMakeFiles/

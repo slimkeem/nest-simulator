@@ -1367,9 +1367,9 @@ public:
     , p_( p.p_ )
     , mean_( p.mean_ )
     , inv_two_std2_( p.inv_two_std2_ )
-		, table_step_( p.table_step_ )
-		, table_max_( p.table_max_ )
-		, table_values_( p.table_values_ )
+    , table_step_( p.table_step_ )
+    , table_max_( p.table_max_ )
+    , table_values_( p.table_values_ )
   {
   }
 
