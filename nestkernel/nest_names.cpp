@@ -452,7 +452,7 @@ const Name t_ref_abs( "t_ref_abs" );
 const Name t_ref_remaining( "t_ref_remaining" );
 const Name t_ref_tot( "t_ref_tot" );
 const Name t_spike( "t_spike" );
-const Name table_step( "table_max" );
+const Name table_max( "table_max" );
 const Name table_step( "table_step" );
 const Name target( "target" );
 const Name target_thread( "target_thread" );
