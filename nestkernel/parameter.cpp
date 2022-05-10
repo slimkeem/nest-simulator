@@ -315,10 +315,10 @@ TabulatedGaussianParameter::TabulatedGaussianParameter( const DictionaryDatum& d
     throw BadProperty( "std > 0 required for gaussian distribution parameter, got std=" + std::to_string( std ) );
   }
 
-  for ( size_t i = 0; i < size_t(std::ceil(table_max_/table_step_)); i++)
+  for ( size_t i = 0; i < size_t(std::ceil( table_max_/table_step_ ) ); i++)
   {
     const auto dx_table = table_step_ + (table_step_ * i);
-    table_values_[i] = std::exp( -dx_table * dx_table * inv_two_std2_ );
+    table_values_.push_back( std::exp( -dx_table * dx_table * inv_two_std2_ ) );
   }
 
 }
@@ -334,8 +334,13 @@ TabulatedGaussianParameter::value( RngPtr rng,
   size_t left = std::floor( dx / table_step_ );
   size_t right = std::ceil( dx / table_step_ );
 
+  if ((( left | right ) < 0) or (( left | right ) > table_values_.size()))
+  {
+    throw BadProperty( "Nope, left or right is wrong" );
+  }
+
   double relative_position_in_interval = ( dx - left * table_step_ ) / table_step_;
-  double interpolated_value = table_values_[left] + (table_values_[right]-table_values_[left]) * relative_position_in_interval;
+  double interpolated_value = table_values_.at(left) + (table_values_.at(right)-table_values_.at(left)) * relative_position_in_interval;
 
   return interpolated_value;
 }
