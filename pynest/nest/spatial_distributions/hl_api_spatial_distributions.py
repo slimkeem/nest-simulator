@@ -85,7 +85,7 @@ def gaussian(x, mean=0.0, std=1.0):
     })
 
 
-def gaussian_tab(x, mean=0.0, std=1.0, step=0.1, max=1.0):
+def gaussian_tab(x, mean=0.0, std=1.0, step=0.01, max=1.0):
     """
     Applies a gaussian distribution on a Parameter.
 
@@ -110,6 +110,7 @@ def gaussian_tab(x, mean=0.0, std=1.0, step=0.1, max=1.0):
         'table_step': step,
         'table_max': max
     })
+
 
 def gaussian2D(x, y, mean_x=0.0, mean_y=0.0, std_x=1.0, std_y=1.0, rho=0.0):
     """
